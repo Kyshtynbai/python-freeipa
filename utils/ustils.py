@@ -3,9 +3,12 @@ import time
 import datetime
 from utils.colors import bcolors
 from utils.crypto import generate_password
+from typing import Tuple, Optional
 
 def get_users_list(f: str) -> list:
-    """ Возвращает список со строками пользаков из файла. Один юзер -- одна строка. Элемент списка [4] -- логин """
+    """ Возвращает список со строками пользаков из файла.
+    Один юзер -- одна строка. Элемент списка [4] -- логин 
+    """
 
     with open(f, 'r', encoding='utf-8') as fname:
         users = []
@@ -14,29 +17,35 @@ def get_users_list(f: str) -> list:
             users.append(line.split(','))
     return users
 
-def check_user(login, verbosity=False):
-    """ Проверяет и печатает инфу о пользователях, проверив наличие пользователя и возвращает True, если пользователь НЕ найден """
+def user_exists(login: str) -> Tuple[bool, Optional[str]]:
+    """
+    Проверяет существование пользователя во FreeIPA
+    
+    Returns:
+        (exists: bool, error_message: str or none)
+    """
 
-    not_present = 0
-
-    command = [
-        'ipa', '-n', 'user-show', login, '--all'
-    ]
+    cmd = ['ipa', '-n', 'user-show', login, '--all']
 
     try:
-        process = subprocess.run(command, 
-        capture_output=True, 
-        text=True, check=True)
-        output = process.stdout.strip()
-        errors = process.stderr.strip()
-        (pager, email, exp) = user_details(output)
-        print(f"Пользователь {login:30} {bcolors.WARNING}найден{bcolors.ENDC:10} {login};{email};{pager};{exp}")
-        return not_present
-    except subprocess.CalledProcessError as e:
-        not_present = 1
-        print(f"Пользователь {login:30} {bcolors.OKBLUE}не найден {bcolors.ENDC:7}", end='')
-        print(f"{e.stderr}", end='')
-        return not_present
+        result = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                text=True, 
+                check=False,
+                timeout=15
+                )
+    except subprocess.TimeoutExpired:
+        return False, "Команда ipa отвалилась по таймауту"
+    except FileNotFoundError:
+        return False, "Команда ipa не найдена"
+    except Exception as e:
+        return False, f"Неожиданная ошибка при запуске команды ipa: {e}"
+    if result.returncode == 0: return True, None
+    if result.returncode == 2: return False, None
+    
+    err_msg = result.stderr.strip() or "Неизвестная ошибка"
+    return False, f"FreeIPA вернула неожиданную ошибку: {result.returncode}: {err_msg}"
 
 def set_password(user):
     """ Устанавливает юзеру пароль """
@@ -73,38 +82,50 @@ def create_user(*args):
     """ Создаёт пользователя в ipa. Возвращает кортеж с UID, выводом и ошибками и паролем """
     # Команда запускается как список строк
     command = [
-        'ipa', '-n', 'user-add', args[4],
-        '--first', args[1],
-        '--last', args[0],
-        '--phone', args[2],
-        '--pager', args[5],
-        '--email', args[3],
-        '--orgunit', args[6]
+        'ipa', '-n', 'user-add', args[4], '--first', 
+        args[1], '--last', args[0], '--phone', args[2], 
+        '--pager', args[5], '--email', args[3], '--orgunit', args[6]
     ]
 
     try:
-        # Запускаем процесс и ожидаем завершения
-        process = subprocess.run(command, capture_output=True, text=True, check=True)
-        
-        # Получаем стандартный вывод и ошибки
+        process = subprocess.run(command, capture_output=True, text=True)
         output = process.stdout.strip()
         errors = process.stderr.strip()
         pw = set_password(args[4])
         set_expitation_date(args[4])
         return (args[4], output, errors, pw)
     
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         print(f"Ошибка создания пользователя: {e}")
+        return None, None, None, None
 
+def get_user(user: str) -> tuple[bool, str or None, str or None]:
+    """
+    Ищет пользователя в ldap FreeIPA.
+    Возвращает: (Найден, Ошибка или None, Вывод ipa или None)
+    """
+    cmd = ['ipa', '-n', 'user-show', user, '--all']
+    try:
+        result = subprocess.run(cmd, 
+                                capture_output=True, 
+                                text=True, 
+                                timeout=15)
+    except Exception as e:
+        return False, f"Unexpected error while calling ipa client: {e}", None 
+    if result.returncode == 0:
+        ipa_output = result.stdout.rstrip() or None
+        return True, None, ipa_output
+    if result.returncode == 2: 
+        return False, None, None
 
 def user_details(ipa_output):
-
+    """
+    Парсит вывод ipa user-show
+    Возвращает кортеж: Фамилия, Имя, Телефон, Почта, Логин, Номер заявки, Отдел, Дата истечения пароля или None 
+    """
     hash = {}
     for field in ipa_output.split("\n"):
         key, value = field.split(":")
         key = key.strip()
         hash[key] = value.strip()
-    return hash.get('Pager Number'), hash.get('Email address'), hash.get('User password expiration')
-
-def get_report():
-    pass
+    return hash.get('First name'), hash.get('Last name'),hash.get('Telephone Number'), hash.get('Email address'), hash.get('User login'), hash.get('Pager Number'), hash.get('Org. Unit'), hash.get('User password expiration')
