@@ -27,8 +27,8 @@ if not args.test:
             users_report[user[4]]['status'] = 'будет создан'
             if not args.check:
                res = create_user(*user)
-               if args.verbose: print(res[1])
-               users_report[user[4]]['password'] = res[-1]
+               if args.verbose: print(res[2])
+               users_report[user[4]]['password'] = res[-1][-1]
 print("=" * 10)
 print('last,first,phone,email,login,password,expiration,ticket')
 # TODO Вот этот вывод окучить с помощью get_user и user_details:

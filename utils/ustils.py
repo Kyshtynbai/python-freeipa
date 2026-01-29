@@ -84,20 +84,22 @@ def create_user(*args):
     command = [
         'ipa', '-n', 'user-add', args[4], '--first', 
         args[1], '--last', args[0], '--phone', args[2], 
-        '--pager', args[5], '--email', args[3], '--orgunit', args[6]
+        '--pager', args[5], '--email', args[3], '--orgunit', args[6], '--random'
     ]
 
     try:
-        process = subprocess.run(command, capture_output=True, text=True)
-        output = process.stdout.strip()
-        errors = process.stderr.strip()
-        pw = set_password(args[4])
-        set_expitation_date(args[4])
-        return (args[4], output, errors, pw)
+        result = subprocess.run(command, capture_output=True, text=True)
     
     except Exception as e:
         print(f"Ошибка создания пользователя: {e}")
-        return None, None, None, None
+        return None, e, None
+    if result.returncode == 0:
+        user_info = ()
+        set_expitation_date(args[4])
+        user_info = user_details(result.stdout.rstrip())
+        return (args[4], result.stderr.rstrip(), user_info)
+    if result.returncode != 0:
+        print("Ощибка!", result.stderr.strip())
 
 def get_user(user: str) -> tuple[bool, str or None, str or None]:
     """
@@ -125,7 +127,9 @@ def user_details(ipa_output):
     """
     hash = {}
     for field in ipa_output.split("\n"):
+        if field.startswith('-'): continue
+        if field.startswith('Added'): continue
         key, value = field.split(":")
         key = key.strip()
         hash[key] = value.strip()
-    return hash.get('First name'), hash.get('Last name'),hash.get('Telephone Number'), hash.get('Email address'), hash.get('User login'), hash.get('Pager Number'), hash.get('Org. Unit'), hash.get('User password expiration')
+    return hash.get('First name'), hash.get('Last name'),hash.get('Telephone Number'), hash.get('Email address'), hash.get('User login'), hash.get('Pager Number'), hash.get('Org. Unit'), hash.get('User password expiration'), hash.get('Random password','***')
